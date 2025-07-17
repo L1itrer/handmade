@@ -43,10 +43,19 @@ void Win32ResizeDIBSection(int Width, int Height)
 	int Pitch = Width * BytesPerPixel;
 	for (int Y = 0;Y < BitmapHeight;++Y)
 	{
-		u32* Pixel = (u32*)Row;
+		u8* Pixel = (u8*)Row;
 		for (int X = 0;X < BitmapWidth;++X)
 		{
-			*Pixel = 0x1010DD;
+			// blue
+			*Pixel = (u8)X;
+			Pixel += 1;
+			// green
+			*Pixel = (u8)Y;
+			Pixel += 1;
+			//red
+			*Pixel = 0;
+			Pixel += 1;
+			// padding
 			Pixel += 1;
 		}
 		Row += Pitch;

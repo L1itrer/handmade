@@ -1,52 +1,73 @@
+#include <cstdint>
+#include <stdint.h>
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-static bool Running = true;
+typedef uint8_t u8;
+typedef uint32_t u32;
 
 #define GetMessageAll(msg) GetMessage(msg, 0, 0, 0)
 
-BITMAPINFO BitmapInfo = {
+static BITMAPINFO BitmapInfo = {
 	.bmiHeader = {
 		.biSize = sizeof(BITMAPINFOHEADER),
 		.biPlanes = 1,
 		.biBitCount = 32,
 		.biCompression = BI_RGB,
-		.biSizeImage = 0,
-		.biXPelsPerMeter = 0,
-		.biYPelsPerMeter = 0,
-		.biClrUsed = 0,
-		.biClrImportant = 0
 	}
 };
 static void* BitmapMemory;
 static HBITMAP BitmapHandle; 
 static HDC BitmapDeviceContext;
+static int BitmapWidth;
+static int BitmapHeight;
+static bool Running = true;
 // DIB - Device Independent Bitmap
 void Win32ResizeDIBSection(int Width, int Height)
 {
-	if (BitmapHandle)
+	if (BitmapMemory)
 	{
-		DeleteObject(BitmapHandle);
+		VirtualFree(BitmapMemory, 0, MEM_RELEASE);
 	}
-	else
-	{
-		BitmapDeviceContext = CreateCompatibleDC(0);
-	}
+	// bitmap memory size: width * height * bytes_per_pixel
+	int BytesPerPixel = 4;
+	BitmapMemory = VirtualAlloc(0, (size_t)(Width * Height * BytesPerPixel), MEM_COMMIT, PAGE_READWRITE);
 
-	
-	BitmapInfo.bmiHeader.biHeight = Height;
+	// NOTE: Negative height makes it so that (0, 0) is in upper left not bottom left
+	BitmapInfo.bmiHeader.biHeight = -Height;
 	BitmapInfo.bmiHeader.biWidth = Width;
-	HDC DeviceContext = CreateCompatibleDC(0);
-	BitmapHandle = CreateDIBSection(BitmapDeviceContext, &BitmapInfo, DIB_RGB_COLORS, &BitmapMemory, 0, 0);
+	BitmapHeight = Height;
+	BitmapWidth = Width;
+
+	u8* Row = (u8*)BitmapMemory;
+	int Pitch = Width * BytesPerPixel;
+	for (int Y = 0;Y < BitmapHeight;++Y)
+	{
+		u32* Pixel = (u32*)Row;
+		for (int X = 0;X < BitmapWidth;++X)
+		{
+			*Pixel = 0x1010DD;
+			Pixel += 1;
+		}
+		Row += Pitch;
+	}
+	
 }
 
-void Win32WindowUpdate(HDC DeviceContext, int X, int Y, int W, int H)
+void Win32WindowUpdate(HDC DeviceContext, RECT* WindowRect)
 {
-	StretchDIBits(
+	/*StretchDIBits(
 		DeviceContext,
 		X, Y, W, H,
 		X, Y, W, H,
 		&BitmapMemory, &BitmapInfo, DIB_RGB_COLORS, SRCCOPY);
-		
+	*/	
+	int WindowWidth = WindowRect->right - WindowRect->left;
+	int WindowHeight = WindowRect->bottom - WindowRect->top;
+	StretchDIBits(DeviceContext,
+			   0, 0, BitmapWidth, BitmapHeight,
+			   0, 0, WindowWidth, WindowHeight,
+			   BitmapMemory, &BitmapInfo, DIB_RGB_COLORS, SRCCOPY);
 }
 
 LRESULT CALLBACK Win32MainWindowCallback(
@@ -82,8 +103,10 @@ LRESULT CALLBACK Win32MainWindowCallback(
 			int Y = Paint.rcPaint.top;
 			int Width = Paint.rcPaint.right - Paint.rcPaint.left;
 			int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
-			Win32WindowUpdate(DeviceContext, X, Y, Width, Height);
+			RECT ClientRect;
+			GetClientRect(Window, &ClientRect);
 			PatBlt(DeviceContext, X, Y, Width, Height, BLACKNESS);
+			Win32WindowUpdate(DeviceContext, &ClientRect);
 			EndPaint(Window, &Paint);
 		}
 			break;
@@ -122,6 +145,7 @@ int CALLBACK WinMain(
 	if (!WindowHandle)
 	{
 		// TODO: im to lazy to report this it's not gonna fail
+		return 1;
 	}
 
 	while (Running)

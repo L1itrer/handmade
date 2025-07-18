@@ -22,6 +22,34 @@ static HDC BitmapDeviceContext;
 static int BitmapWidth;
 static int BitmapHeight;
 static bool Running = true;
+
+void RenderWeirdGradient(int XOffset, int YOffset)
+{
+	int BytesPerPixel = 4;
+	u8* Row = (u8*)BitmapMemory;
+	int Pitch = BitmapWidth * BytesPerPixel;
+	for (int Y = 0;Y < BitmapHeight;++Y)
+	{
+		u8* Pixel = (u8*)Row;
+		for (int X = 0;X < BitmapWidth;++X)
+		{
+			// blue
+			*Pixel = (u8)(X + XOffset);
+			Pixel += 1;
+			// green
+			*Pixel = (u8)(Y + YOffset);
+			Pixel += 1;
+			//red
+			*Pixel = 0;
+			Pixel += 1;
+			// padding
+			Pixel += 1;
+		}
+		Row += Pitch;
+	}
+}
+
+
 // DIB - Device Independent Bitmap
 void Win32ResizeDIBSection(int Width, int Height)
 {
@@ -37,33 +65,10 @@ void Win32ResizeDIBSection(int Width, int Height)
 	BitmapInfo.bmiHeader.biHeight = -Height;
 	BitmapInfo.bmiHeader.biWidth = Width;
 	BitmapHeight = Height;
-	BitmapWidth = Width;
-
-	u8* Row = (u8*)BitmapMemory;
-	int Pitch = Width * BytesPerPixel;
-	for (int Y = 0;Y < BitmapHeight;++Y)
-	{
-		u8* Pixel = (u8*)Row;
-		for (int X = 0;X < BitmapWidth;++X)
-		{
-			// blue
-			*Pixel = (u8)X;
-			Pixel += 1;
-			// green
-			*Pixel = (u8)Y;
-			Pixel += 1;
-			//red
-			*Pixel = 0;
-			Pixel += 1;
-			// padding
-			Pixel += 1;
-		}
-		Row += Pitch;
-	}
-	
+	BitmapWidth = Width;	
 }
 
-void Win32WindowUpdate(HDC DeviceContext, RECT* WindowRect)
+void Win32WindowUpdate(HDC DeviceContext, RECT* ClientRect)
 {
 	/*StretchDIBits(
 		DeviceContext,
@@ -71,8 +76,8 @@ void Win32WindowUpdate(HDC DeviceContext, RECT* WindowRect)
 		X, Y, W, H,
 		&BitmapMemory, &BitmapInfo, DIB_RGB_COLORS, SRCCOPY);
 	*/	
-	int WindowWidth = WindowRect->right - WindowRect->left;
-	int WindowHeight = WindowRect->bottom - WindowRect->top;
+	int WindowWidth = ClientRect->right - ClientRect->left;
+	int WindowHeight = ClientRect->bottom - ClientRect->top;
 	StretchDIBits(DeviceContext,
 			   0, 0, BitmapWidth, BitmapHeight,
 			   0, 0, WindowWidth, WindowHeight,
@@ -157,11 +162,21 @@ int CALLBACK WinMain(
 		return 1;
 	}
 
+	int XOffset = 0, YOffset = 0;
 	while (Running)
 	{
+
+		RenderWeirdGradient(XOffset, YOffset);
+		RECT ClientRect;
+		GetClientRect(WindowHandle, &ClientRect);
+		HDC DeviceContext = GetDC(WindowHandle);
+		Win32WindowUpdate(DeviceContext, &ClientRect);
+		XOffset += 1;
+		ReleaseDC(WindowHandle, DeviceContext);
 		MSG Message;
-		BOOL MessageResult = GetMessageAll(&Message);
-		if (MessageResult <= 0) break;
+		BOOL MessageResult = PeekMessageA(&Message, 0, 0, 0, PM_REMOVE); 
+		if (!MessageResult) continue;
+		if (Message.message == WM_QUIT) break;
 
 		// NOTE: These functions can fail but if windows decides not to handle the messeges
 		// there is not much to be done so yeah

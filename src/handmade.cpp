@@ -1,37 +1,65 @@
-#include <cstdint>
 #include <stdint.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
 typedef uint8_t u8;
+typedef uint16_t u16;
 typedef uint32_t u32;
+typedef uint64_t u64;
 
+typedef int8_t i8;
+typedef int16_t i16;
+typedef int32_t i32;
+typedef int64_t i64;
+
+typedef size_t usize;
 #define GetMessageAll(msg) GetMessage(msg, 0, 0, 0)
 
-static BITMAPINFO BitmapInfo = {
-	.bmiHeader = {
-		.biSize = sizeof(BITMAPINFOHEADER),
-		.biPlanes = 1,
-		.biBitCount = 32,
-		.biCompression = BI_RGB,
-	}
-};
-static void* BitmapMemory;
-static HBITMAP BitmapHandle; 
-static HDC BitmapDeviceContext;
-static int BitmapWidth;
-static int BitmapHeight;
-static bool Running = true;
 
-void RenderWeirdGradient(int XOffset, int YOffset)
+#define global static
+#define local_persist static
+
+typedef struct win32_buffer{
+	void* Memory;
+	int Pitch;
+	int Width;
+	int Height;
+	int BytesPerPixel;
+	BITMAPINFO Info; 
+	int padding; // NOTE: this exists so that msvc shuts up about padding
+}win32_buffer;
+
+
+global bool Running = true;
+global win32_buffer GBuffer;
+
+typedef struct win32_win_dimension {
+	int Width;
+	int Height;
+}win32_win_dimension;
+
+win32_win_dimension Win32GetWindowDimensions(HWND Window)
 {
-	int BytesPerPixel = 4;
-	u8* Row = (u8*)BitmapMemory;
-	int Pitch = BitmapWidth * BytesPerPixel;
-	for (int Y = 0;Y < BitmapHeight;++Y)
+	RECT Rect;
+	GetClientRect(Window, &Rect);
+	win32_win_dimension Result = {
+		.Width = Rect.right - Rect.left,
+		.Height = Rect.bottom - Rect.top
+	};
+	return Result;
+}
+
+void RenderWeirdGradient(win32_buffer Buffer, int XOffset, int YOffset)
+{
+	// WARNING: The function kinda arbitrarly assumes BytesPerPixel to be 4
+	u8* Row = (u8*)Buffer.Memory;
+	int Width = Buffer.Width;
+	int Height = Buffer.Height;
+	int Pitch = Buffer.Pitch;
+	for (int Y = 0;Y < Height;++Y)
 	{
 		u8* Pixel = (u8*)Row;
-		for (int X = 0;X < BitmapWidth;++X)
+		for (int X = 0;X < Width;++X)
 		{
 			// blue
 			*Pixel = (u8)(X + XOffset);
@@ -39,7 +67,7 @@ void RenderWeirdGradient(int XOffset, int YOffset)
 			// green
 			*Pixel = (u8)(Y + YOffset);
 			Pixel += 1;
-			//red
+			// red
 			*Pixel = 0;
 			Pixel += 1;
 			// padding
@@ -51,37 +79,41 @@ void RenderWeirdGradient(int XOffset, int YOffset)
 
 
 // DIB - Device Independent Bitmap
-void Win32ResizeDIBSection(int Width, int Height)
+void Win32ResizeDIBSection(win32_buffer* Buffer, int Width, int Height)
 {
-	if (BitmapMemory)
+	if (Buffer->Memory)
 	{
-		VirtualFree(BitmapMemory, 0, MEM_RELEASE);
+		VirtualFree(Buffer->Memory, 0, MEM_RELEASE);
 	}
 	// bitmap memory size: width * height * bytes_per_pixel
-	int BytesPerPixel = 4;
-	BitmapMemory = VirtualAlloc(0, (size_t)(Width * Height * BytesPerPixel), MEM_COMMIT, PAGE_READWRITE);
+	Buffer->BytesPerPixel = 4;
+	int BytesPerPixel = Buffer->BytesPerPixel;	
+	Buffer->Memory = VirtualAlloc(0, (size_t)(Width * Height * BytesPerPixel), MEM_COMMIT, PAGE_READWRITE);
 
-	// NOTE: Negative height makes it so that (0, 0) is in upper left not bottom left
-	BitmapInfo.bmiHeader.biHeight = -Height;
-	BitmapInfo.bmiHeader.biWidth = Width;
-	BitmapHeight = Height;
-	BitmapWidth = Width;	
+	// NOTE: Negative height makes it so that (0, 0) is in top left not bottom left
+	Buffer->Info = {
+		.bmiHeader = {
+			.biSize = sizeof(BITMAPINFOHEADER),
+			.biWidth = Width,
+			.biHeight = -Height,
+			.biPlanes = 1,
+			.biBitCount = 32, .biCompression = BI_RGB,
+		}
+	};
+
+	Buffer->Height = Height;
+	Buffer->Width = Width;
+
+
+	Buffer->Pitch = Width * BytesPerPixel;
 }
 
-void Win32WindowUpdate(HDC DeviceContext, RECT* ClientRect)
+void Win32WindowCopyBuffer(win32_buffer Buffer, HDC DeviceContext, int WindowWidth, int WindowHeight)
 {
-	/*StretchDIBits(
-		DeviceContext,
-		X, Y, W, H,
-		X, Y, W, H,
-		&BitmapMemory, &BitmapInfo, DIB_RGB_COLORS, SRCCOPY);
-	*/	
-	int WindowWidth = ClientRect->right - ClientRect->left;
-	int WindowHeight = ClientRect->bottom - ClientRect->top;
 	StretchDIBits(DeviceContext,
-			   0, 0, BitmapWidth, BitmapHeight,
+			   0, 0, Buffer.Width, Buffer.Height,
 			   0, 0, WindowWidth, WindowHeight,
-			   BitmapMemory, &BitmapInfo, DIB_RGB_COLORS, SRCCOPY);
+			   Buffer.Memory, &Buffer.Info, DIB_RGB_COLORS, SRCCOPY);
 }
 
 LRESULT CALLBACK Win32MainWindowCallback(
@@ -94,11 +126,8 @@ LRESULT CALLBACK Win32MainWindowCallback(
 	switch (Message)
 	{
 		case WM_SIZE: {
-			RECT ClientRect;
-			GetClientRect(Window, &ClientRect);
-			int Width = ClientRect.right - ClientRect.left;
-			int Height = ClientRect.bottom - ClientRect.top;
-			Win32ResizeDIBSection(Width, Height);
+			win32_win_dimension Dim = Win32GetWindowDimensions(Window);
+			Win32ResizeDIBSection(&GBuffer, Dim.Width, Dim.Height);
 		}
 			break;
 		case WM_DESTROY:
@@ -117,10 +146,9 @@ LRESULT CALLBACK Win32MainWindowCallback(
 			int Y = Paint.rcPaint.top;
 			int Width = Paint.rcPaint.right - Paint.rcPaint.left;
 			int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
-			RECT ClientRect;
-			GetClientRect(Window, &ClientRect);
 			PatBlt(DeviceContext, X, Y, Width, Height, BLACKNESS);
-			Win32WindowUpdate(DeviceContext, &ClientRect);
+			win32_win_dimension Dim = Win32GetWindowDimensions(Window);
+			Win32WindowCopyBuffer(GBuffer, DeviceContext, Dim.Width, Dim.Height);
 			EndPaint(Window, &Paint);
 		}
 			break;
@@ -137,6 +165,10 @@ int CALLBACK WinMain(
 	LPSTR CommandLine, 
 	int ShowCode)
 {
+	// NOTE: OWNDC style is overkill and unnececery, but
+	// i'm still leaving it because it does not hurt
+	// HREDRAW and VREDRAW forces windows to redraw entire
+	// window when resizing
 	WNDCLASS WindowClass = {
 		.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW,
 		.lpfnWndProc = Win32MainWindowCallback,
@@ -150,13 +182,13 @@ int CALLBACK WinMain(
 		return 1;
 	}
 
-	HWND WindowHandle = CreateWindowExA(0, 
+	HWND Window = CreateWindowExA(0, 
 									WindowClass.lpszClassName, 
 									"Handmade Hero", 
 									WS_OVERLAPPEDWINDOW | WS_VISIBLE,
 									CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
 									0, 0, Instance, 0);
-	if (!WindowHandle)
+	if (!Window)
 	{
 		// TODO: im to lazy to report this it's not gonna fail
 		return 1;
@@ -166,22 +198,23 @@ int CALLBACK WinMain(
 	while (Running)
 	{
 
-		RenderWeirdGradient(XOffset, YOffset);
-		RECT ClientRect;
-		GetClientRect(WindowHandle, &ClientRect);
-		HDC DeviceContext = GetDC(WindowHandle);
-		Win32WindowUpdate(DeviceContext, &ClientRect);
-		XOffset += 1;
-		ReleaseDC(WindowHandle, DeviceContext);
 		MSG Message;
-		BOOL MessageResult = PeekMessageA(&Message, 0, 0, 0, PM_REMOVE); 
-		if (!MessageResult) continue;
-		if (Message.message == WM_QUIT) break;
+		while (PeekMessageA(&Message, 0, 0, 0, PM_REMOVE))
+		{
+			if (Message.message == WM_QUIT) Running = false;
+			// NOTE: These functions can fail but if windows decides not to handle the messeges
+			// there is not much to be done so yeah
+			TranslateMessage(&Message);
+			DispatchMessageA(&Message);	
+		}
 
-		// NOTE: These functions can fail but if windows decides not to handle the messeges
-		// there is not much to be done so yeah
-		TranslateMessage(&Message);
-		DispatchMessageA(&Message);	
+
+		RenderWeirdGradient(GBuffer, XOffset, YOffset);
+		HDC DeviceContext = GetDC(Window);
+		win32_win_dimension Dim = Win32GetWindowDimensions(Window);
+		Win32WindowCopyBuffer(GBuffer, DeviceContext, Dim.Width, Dim.Height);
+		XOffset += 1;
+		ReleaseDC(Window, DeviceContext);
 
 	}
 	return 0;

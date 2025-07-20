@@ -2,15 +2,15 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-typedef uint8_t u8;
+typedef uint8_t  u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 
-typedef int8_t i8;
-typedef int16_t i16;
-typedef int32_t i32;
-typedef int64_t i64;
+typedef int8_t   i8;
+typedef int16_t  i16;
+typedef int32_t  i32;
+typedef int64_t  i64;
 
 typedef size_t usize;
 #define GetMessageAll(msg) GetMessage(msg, 0, 0, 0)
@@ -30,7 +30,7 @@ typedef struct win32_buffer{
 }win32_buffer;
 
 
-global bool Running = true;
+global bool GRunning = true;
 global win32_buffer GBuffer;
 
 typedef struct win32_win_dimension {
@@ -111,8 +111,8 @@ void Win32ResizeDIBSection(win32_buffer* Buffer, int Width, int Height)
 void Win32WindowCopyBuffer(win32_buffer Buffer, HDC DeviceContext, int WindowWidth, int WindowHeight)
 {
 	StretchDIBits(DeviceContext,
-			   0, 0, Buffer.Width, Buffer.Height,
 			   0, 0, WindowWidth, WindowHeight,
+			   0, 0, Buffer.Width, Buffer.Height,
 			   Buffer.Memory, &Buffer.Info, DIB_RGB_COLORS, SRCCOPY);
 }
 
@@ -126,15 +126,13 @@ LRESULT CALLBACK Win32MainWindowCallback(
 	switch (Message)
 	{
 		case WM_SIZE: {
-			win32_win_dimension Dim = Win32GetWindowDimensions(Window);
-			Win32ResizeDIBSection(&GBuffer, Dim.Width, Dim.Height);
 		}
 			break;
 		case WM_DESTROY:
-			Running = false;
+			GRunning = false;
 			break;
 		case WM_CLOSE:
-			Running = false;
+			GRunning = false;
 			break;
 		case WM_ACTIVATEAPP:
 			OutputDebugStringA("WM_ACTIVATEAPP\n");
@@ -142,11 +140,6 @@ LRESULT CALLBACK Win32MainWindowCallback(
 		case WM_PAINT: {
 			PAINTSTRUCT Paint;
 			HDC DeviceContext = BeginPaint(Window, &Paint);
-			int X = Paint.rcPaint.left;
-			int Y = Paint.rcPaint.top;
-			int Width = Paint.rcPaint.right - Paint.rcPaint.left;
-			int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
-			PatBlt(DeviceContext, X, Y, Width, Height, BLACKNESS);
 			win32_win_dimension Dim = Win32GetWindowDimensions(Window);
 			Win32WindowCopyBuffer(GBuffer, DeviceContext, Dim.Width, Dim.Height);
 			EndPaint(Window, &Paint);
@@ -193,15 +186,16 @@ int CALLBACK WinMain(
 		// TODO: im to lazy to report this it's not gonna fail
 		return 1;
 	}
+	Win32ResizeDIBSection(&GBuffer, 1280, 720);
 
 	int XOffset = 0, YOffset = 0;
-	while (Running)
+	while (GRunning)
 	{
 
 		MSG Message;
 		while (PeekMessageA(&Message, 0, 0, 0, PM_REMOVE))
 		{
-			if (Message.message == WM_QUIT) Running = false;
+			if (Message.message == WM_QUIT) GRunning = false;
 			// NOTE: These functions can fail but if windows decides not to handle the messeges
 			// there is not much to be done so yeah
 			TranslateMessage(&Message);

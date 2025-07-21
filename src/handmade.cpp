@@ -68,8 +68,8 @@ global x_input_set_state* XInputSetState_ = XInputSetStateStub;
 
 static void Win32LoadInput(void)
 {
-	HMODULE XInputLibrary = LoadLibrary("xinput1_4.dll");
-	if (!XInputLibrary) XInputLibrary = LoadLibrary("xinput1_3.dll");
+	HMODULE XInputLibrary = LoadLibraryA("xinput1_4.dll");
+	if (!XInputLibrary) XInputLibrary = LoadLibraryA("xinput1_3.dll");
 	if (XInputLibrary)
 	{
 		XInputGetState_ = (x_input_get_state*)GetProcAddress(XInputLibrary, "XInputGetState");
@@ -96,13 +96,13 @@ win32_win_dimension Win32GetWindowDimensions(HWND Window)
 	return Result;
 }
 
-void RenderWeirdGradient(win32_buffer Buffer, int XOffset, int YOffset)
+void RenderWeirdGradient(win32_buffer* Buffer, int XOffset, int YOffset)
 {
 	// WARNING: The function kinda arbitrarly assumes BytesPerPixel to be 4
-	u8* Row = (u8*)Buffer.Memory;
-	int Width = Buffer.Width;
-	int Height = Buffer.Height;
-	int Pitch = Buffer.Pitch;
+	u8* Row = (u8*)Buffer->Memory;
+	int Width = Buffer->Width;
+	int Height = Buffer->Height;
+	int Pitch = Buffer->Pitch;
 	for (int Y = 0;Y < Height;++Y)
 	{
 		u8* Pixel = (u8*)Row;
@@ -183,6 +183,24 @@ LRESULT CALLBACK Win32MainWindowCallback(
 			break;
 		case WM_ACTIVATEAPP:
 			break;
+		case WM_SYSKEYDOWN:
+		case WM_SYSKEYUP:
+		case WM_KEYUP:
+		case WM_KEYDOWN:
+			{
+				u32 VKCode = WParam;
+				#define KEY_MESSAGE_WAS_DOWN_BIT (1 << 30)
+				#define KEY_MESSAGE_IS_DOWN_BIT (1 << 31)
+				bool WasDown = ((LParam & KEY_MESSAGE_WAS_DOWN_BIT) != 0);
+				bool IsDown = ((LParam & KEY_MESSAGE_IS_DOWN_BIT) == 0);
+				if (IsDown == WasDown) break;
+				if (VKCode == VK_UP)
+				{
+					if (IsDown) OutputDebugStringA("UP: IsDown\n");
+					if (WasDown) OutputDebugStringA("UP: WasDown\n");
+				}
+			}
+			break;
 		case WM_PAINT: {
 			PAINTSTRUCT Paint;
 			HDC DeviceContext = BeginPaint(Window, &Paint);
@@ -208,7 +226,7 @@ int CALLBACK WinMain(
 	// i'm still leaving it because it does not hurt
 	// HREDRAW and VREDRAW forces windows to redraw entire
 	// window when resizing
-	WNDCLASS WindowClass = {
+	WNDCLASSA WindowClass = {
 		.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW,
 		.lpfnWndProc = Win32MainWindowCallback,
 		.hInstance = Instance,
@@ -274,15 +292,21 @@ int CALLBACK WinMain(
 			bool BButton = (Pad->wButtons & XINPUT_GAMEPAD_B);
 			bool XButton = (Pad->wButtons & XINPUT_GAMEPAD_X);
 			bool YButton = (Pad->wButtons & XINPUT_GAMEPAD_Y);
-			if (YButton) YOffset += 1;
+
+
+			i16 StickX = Pad->sThumbLX;
+			i16 StickY = Pad->sThumbLY;
+
+			XOffset += StickX >> 12;
+			// NOTE: why do i have to subtract not add tho?
+			YOffset -= StickY >> 12;
 		}
 
 
-		RenderWeirdGradient(GBuffer, XOffset, YOffset);
+		RenderWeirdGradient(&GBuffer, XOffset, YOffset);
 		HDC DeviceContext = GetDC(Window);
 		win32_win_dimension Dim = Win32GetWindowDimensions(Window);
 		Win32WindowCopyBuffer(GBuffer, DeviceContext, Dim.Width, Dim.Height);
-		XOffset += 1;
 		ReleaseDC(Window, DeviceContext);
 
 	}

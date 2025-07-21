@@ -1,6 +1,19 @@
 #include <stdint.h>
+#include <stdio.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
+
+// NOTE: in the original handmade hero casey was loading xinput dynamically from a dll, there was that
+// entire macro system, it was cool
+// but i think nowadays it might beis simply overkill, his reasoning was that requirments listed in MSDN are sketchy
+// and might require a very new windows 8 that no one has, and you want the program to run even
+// when someone does not have this library
+// so now everyone has windows 10 at the least, it seems that it is unnecessery. nevertheless,
+// the idea is so cool that i will follow along anyway
+#pragma warning(push, 0)
+#include <Xinput.h>
+#pragma warning(pop)
 
 typedef uint8_t  u8;
 typedef uint16_t u16;
@@ -29,6 +42,40 @@ typedef struct win32_buffer{
 	int padding; // NOTE: this exists so that msvc shuts up about padding
 }win32_buffer;
 
+#define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE *pState)
+typedef X_INPUT_GET_STATE(x_input_get_state);
+X_INPUT_GET_STATE(XInputGetStateStub)
+{
+	return 0;
+}
+global x_input_get_state* XInputGetState_ = XInputGetStateStub;
+
+
+#define X_INPUT_SET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_VIBRATION *pVibration)
+typedef X_INPUT_SET_STATE(x_input_set_state);
+X_INPUT_SET_STATE(XInputSetStateStub)
+{
+	return 0;
+}
+global x_input_set_state* XInputSetState_ = XInputSetStateStub;
+
+#define LOAD_XINPUT_DLL
+#ifdef LOAD_XINPUT_DLL
+
+#define XInputGetState XInputGetState_
+#define XInputSetState XInputSetState_
+#endif
+
+static void Win32LoadInput(void)
+{
+	HMODULE XInputLibrary = LoadLibrary("xinput1_4.dll");
+	if (!XInputLibrary) XInputLibrary = LoadLibrary("xinput1_3.dll");
+	if (XInputLibrary)
+	{
+		XInputGetState_ = (x_input_get_state*)GetProcAddress(XInputLibrary, "XInputGetState");
+		XInputSetState_ = (x_input_set_state*)GetProcAddress(XInputLibrary, "XInputSetState");
+	}
+}
 
 global bool GRunning = true;
 global win32_buffer GBuffer;
@@ -135,7 +182,6 @@ LRESULT CALLBACK Win32MainWindowCallback(
 			GRunning = false;
 			break;
 		case WM_ACTIVATEAPP:
-			OutputDebugStringA("WM_ACTIVATEAPP\n");
 			break;
 		case WM_PAINT: {
 			PAINTSTRUCT Paint;
@@ -187,6 +233,9 @@ int CALLBACK WinMain(
 		return 1;
 	}
 	Win32ResizeDIBSection(&GBuffer, 1280, 720);
+	#ifdef LOAD_XINPUT_DLL
+	Win32LoadInput();
+	#endif
 
 	int XOffset = 0, YOffset = 0;
 	while (GRunning)
@@ -200,6 +249,32 @@ int CALLBACK WinMain(
 			// there is not much to be done so yeah
 			TranslateMessage(&Message);
 			DispatchMessageA(&Message);	
+		}
+
+		for (DWORD ControllerIdx = 0; ControllerIdx < XUSER_MAX_COUNT; ++ControllerIdx)
+		{
+			XINPUT_STATE ControllerState;
+			if (XInputGetState(ControllerIdx, &ControllerState) != ERROR_SUCCESS)
+			{
+				// NOTE: controller is unavailable
+				continue;
+			}
+			// NOTE: The controller is plugged in
+			// NOTE: ControllerState.dwPackerNumber says how many missed inputs there were
+			XINPUT_GAMEPAD* Pad = &ControllerState.Gamepad;
+			bool DPadUp = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_UP);
+			bool DPadDown = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN);
+			bool DPadLeft = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT);
+			bool DPadRight = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT);
+			bool Start = (Pad->wButtons & XINPUT_GAMEPAD_START);
+			bool Back = (Pad->wButtons & XINPUT_GAMEPAD_BACK);	
+			bool LShoulder = (Pad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER);
+			bool RShoulder = (Pad->wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER);
+			bool AButton = (Pad->wButtons & XINPUT_GAMEPAD_A);
+			bool BButton = (Pad->wButtons & XINPUT_GAMEPAD_B);
+			bool XButton = (Pad->wButtons & XINPUT_GAMEPAD_X);
+			bool YButton = (Pad->wButtons & XINPUT_GAMEPAD_Y);
+			if (YButton) YOffset += 1;
 		}
 
 

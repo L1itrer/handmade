@@ -1,7 +1,5 @@
 #include <stdint.h>
 #include <stdio.h>
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 
 
 // NOTE: in the original handmade hero casey was loading xinput dynamically from a dll, there was that
@@ -11,7 +9,12 @@
 // when someone does not have this library
 // so now everyone has windows 10 at the least, it seems that it is unnecessery. nevertheless,
 // the idea is so cool that i will follow along anyway
+//
+// Im not doing that for dsound tho come on its old af
 #pragma warning(push, 0)
+#include <windows.h>
+// TODO: use a modern sound api
+#include <dsound.h>
 #include <Xinput.h>
 #pragma warning(pop)
 
@@ -46,7 +49,7 @@ typedef struct win32_buffer{
 typedef X_INPUT_GET_STATE(x_input_get_state);
 X_INPUT_GET_STATE(XInputGetStateStub)
 {
-	return 0;
+	return ERROR_DEVICE_NOT_CONNECTED;
 }
 global x_input_get_state* XInputGetState_ = XInputGetStateStub;
 
@@ -55,7 +58,7 @@ global x_input_get_state* XInputGetState_ = XInputGetStateStub;
 typedef X_INPUT_SET_STATE(x_input_set_state);
 X_INPUT_SET_STATE(XInputSetStateStub)
 {
-	return 0;
+	return ERROR_DEVICE_NOT_CONNECTED;
 }
 global x_input_set_state* XInputSetState_ = XInputSetStateStub;
 
@@ -75,6 +78,38 @@ static void Win32LoadInput(void)
 		XInputGetState_ = (x_input_get_state*)GetProcAddress(XInputLibrary, "XInputGetState");
 		XInputSetState_ = (x_input_set_state*)GetProcAddress(XInputLibrary, "XInputSetState");
 	}
+}
+
+// TODO: error check these functions
+static void Win32InitDsound(HWND Window, DWORD SamplesPerSecond, DWORD BufferSize)
+{
+	LPDIRECTSOUND DirectSound;
+	DirectSoundCreate(0, &DirectSound,0);
+	DirectSound->SetCooperativeLevel(Window, DSSCL_PRIORITY);
+	LPDIRECTSOUNDBUFFER PrimaryBuffer, SecondaryBuffer;
+	
+	DSBUFFERDESC BufferDescr = {
+		.dwSize = sizeof(DSBUFFERDESC),
+		.dwFlags = DSBCAPS_PRIMARYBUFFER,
+	};
+	DirectSound->CreateSoundBuffer(&BufferDescr, &PrimaryBuffer, 0);
+	WAVEFORMATEX WaveFormat = {
+		.wFormatTag = WAVE_FORMAT_PCM,
+		.nChannels = 2,
+		.nSamplesPerSec = SamplesPerSecond,
+		.wBitsPerSample = 16,
+	};
+	
+	WaveFormat.nBlockAlign = (WaveFormat.nChannels*WaveFormat.wBitsPerSample) / 8;
+	WaveFormat.nAvgBytesPerSec = WaveFormat.nSamplesPerSec*WaveFormat.nBlockAlign;
+	PrimaryBuffer->SetFormat(&WaveFormat);
+
+	DSBUFFERDESC SecondaryBufferDescr = {
+		.dwSize = sizeof(DSBUFFERDESC),
+		.dwBufferBytes = BufferSize,
+		.lpwfxFormat = &WaveFormat,
+	};
+	DirectSound->CreateSoundBuffer(&SecondaryBufferDescr, &SecondaryBuffer, 0);
 }
 
 global bool GRunning = true;
@@ -194,11 +229,8 @@ LRESULT CALLBACK Win32MainWindowCallback(
 				bool WasDown = ((LParam & KEY_MESSAGE_WAS_DOWN_BIT) != 0);
 				bool IsDown = ((LParam & KEY_MESSAGE_IS_DOWN_BIT) == 0);
 				if (IsDown == WasDown) break;
-				if (VKCode == VK_UP)
-				{
-					if (IsDown) OutputDebugStringA("UP: IsDown\n");
-					if (WasDown) OutputDebugStringA("UP: WasDown\n");
-				}
+				bool AltKeyWasDown = (LParam & (1 << 29)) != 0;
+				if ((VKCode == VK_F4) && AltKeyWasDown) GRunning = false;
 			}
 			break;
 		case WM_PAINT: {
@@ -255,6 +287,8 @@ int CALLBACK WinMain(
 	Win32LoadInput();
 	#endif
 
+
+	Win32InitDsound(Window, 48000, 48000*sizeof(i16)*2);
 	int XOffset = 0, YOffset = 0;
 	while (GRunning)
 	{
@@ -285,7 +319,7 @@ int CALLBACK WinMain(
 			bool DPadLeft = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT);
 			bool DPadRight = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT);
 			bool Start = (Pad->wButtons & XINPUT_GAMEPAD_START);
-			bool Back = (Pad->wButtons & XINPUT_GAMEPAD_BACK);	
+			bool Back = (Pad->wButtons & XINPUT_GAMEPAD_BACK);
 			bool LShoulder = (Pad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER);
 			bool RShoulder = (Pad->wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER);
 			bool AButton = (Pad->wButtons & XINPUT_GAMEPAD_A);

@@ -7,7 +7,6 @@
 // TODO: use a modern sound api
 #include <dsound.h>
 #include <Xinput.h>
-#pragma warning(pop)
 
 typedef uint8_t  u8;
 typedef uint16_t u16;
@@ -42,7 +41,19 @@ typedef struct win32_buffer{
 }win32_buffer;
 
 
-
+typedef struct win32_sound_output {
+  int SamplesPerSecond;
+  int ToneHz;
+  u32 RunningSampleIndex;
+  f32 TSine;
+  int WavePeriod;
+  int BytesPerSample;
+  int SecondaryBufferSize;
+  i16 ToneVolume;
+  i16 padding;
+  int LatencySampleCount;
+} win32_sound_output;
+global win32_sound_output GSoundOutput;
 	LPDIRECTSOUNDBUFFER GSecondaryBuffer;
 // TODO: error check these functions
 static void Win32InitDsound(HWND Window, DWORD SamplesPerSecond, DWORD BufferSize)
@@ -161,70 +172,6 @@ void Win32WindowCopyBuffer(win32_buffer Buffer, HDC DeviceContext, int WindowWid
 			   0, 0, Buffer.Width, Buffer.Height,
 			   Buffer.Memory, &Buffer.Info, DIB_RGB_COLORS, SRCCOPY);
 }
-
-LRESULT CALLBACK Win32MainWindowCallback(
-  HWND Window,
-  UINT Message,
-  WPARAM WParam,
-  LPARAM LParam)
-{
-	LRESULT Result = 0;
-	switch (Message)
-	{
-		case WM_SIZE: {
-		}
-			break;
-		case WM_DESTROY:
-			GRunning = false;
-			break;
-		case WM_CLOSE:
-			GRunning = false;
-			break;
-		case WM_ACTIVATEAPP:
-			break;
-		case WM_SYSKEYDOWN:
-		case WM_SYSKEYUP:
-		case WM_KEYUP:
-		case WM_KEYDOWN:
-			{
-				u64 VKCode = WParam;
-				#define KEY_MESSAGE_WAS_DOWN_BIT (1 << 30)
-				#define KEY_MESSAGE_IS_DOWN_BIT (1 << 31)
-				bool WasDown = ((LParam & KEY_MESSAGE_WAS_DOWN_BIT) != 0);
-				bool IsDown = ((LParam & KEY_MESSAGE_IS_DOWN_BIT) == 0);
-				if (IsDown == WasDown) break;
-				bool AltKeyWasDown = (LParam & (1 << 29)) != 0;
-				if ((VKCode == VK_F4) && AltKeyWasDown) GRunning = false;
-			}
-			break;
-		case WM_PAINT: {
-			PAINTSTRUCT Paint;
-			HDC DeviceContext = BeginPaint(Window, &Paint);
-			win32_win_dimension Dim = Win32GetWindowDimensions(Window);
-			Win32WindowCopyBuffer(GBuffer, DeviceContext, Dim.Width, Dim.Height);
-			EndPaint(Window, &Paint);
-		}
-			break;
-		default:
-			Result = DefWindowProc(Window, Message, WParam, LParam);
-			break;
-	}
-	return Result;
-}
-
-typedef struct win32_sound_output {
-  int SamplesPerSecond;
-  int ToneHz;
-  u32 RunningSampleIndex;
-  f32 TSine;
-  int WavePeriod;
-  int BytesPerSample;
-  int SecondaryBufferSize;
-  i16 ToneVolume;
-  i16 padding;
-  int LatencySampleCount;
-} win32_sound_output;
-
 win32_sound_output Win32DefaultSoundOutput()
 {
   win32_sound_output SoundOutput = {
@@ -276,6 +223,81 @@ void Win32FillSoundBuffer(win32_sound_output* SoundOutput, DWORD ByteToLock, DWO
 
 }
 
+
+void WriteToSoundBuffer(win32_sound_output* SoundOutput)
+{
+    DWORD PlayCursor, WriteCursor;
+    if (SUCCEEDED(GSecondaryBuffer->GetCurrentPosition(&PlayCursor, &WriteCursor)))
+    {
+      DWORD BytesToWrite;
+      DWORD TargetCursor = (PlayCursor + SoundOutput->LatencySampleCount * SoundOutput->BytesPerSample)
+        % SoundOutput->SecondaryBufferSize;
+      DWORD ByteToLock = (SoundOutput->RunningSampleIndex * SoundOutput->BytesPerSample) % SoundOutput->SecondaryBufferSize;
+      if (ByteToLock > TargetCursor)
+      {
+        BytesToWrite = SoundOutput->SecondaryBufferSize - ByteToLock;
+        BytesToWrite += TargetCursor;
+      }
+      else
+      {
+        BytesToWrite = TargetCursor - ByteToLock;
+      }
+      Win32FillSoundBuffer(SoundOutput, ByteToLock, BytesToWrite);
+    }
+}
+
+LRESULT CALLBACK Win32MainWindowCallback(
+  HWND Window,
+  UINT Message,
+  WPARAM WParam,
+  LPARAM LParam)
+{
+	LRESULT Result = 0;
+	switch (Message)
+	{
+		case WM_SIZE: {
+		}
+			break;
+		case WM_DESTROY:
+			GRunning = false;
+			break;
+		case WM_CLOSE:
+			GRunning = false;
+			break;
+		case WM_ACTIVATEAPP:
+			break;
+		case WM_SYSKEYDOWN:
+		case WM_SYSKEYUP:
+		case WM_KEYUP:
+		case WM_KEYDOWN:
+			{
+				u64 VKCode = WParam;
+				#define KEY_MESSAGE_WAS_DOWN_BIT (1 << 29)
+				#define KEY_MESSAGE_IS_DOWN_BIT (1 << 30)
+				bool WasDown = ((LParam & KEY_MESSAGE_WAS_DOWN_BIT) != 0);
+				bool IsDown = ((LParam & KEY_MESSAGE_IS_DOWN_BIT) == 0);
+				if (IsDown == WasDown) break;
+				bool AltKeyWasDown = (LParam & (1 << 29)) != 0;
+				if ((VKCode == VK_F4) && AltKeyWasDown) GRunning = false;
+			}
+			break;
+		case WM_PAINT: {
+			PAINTSTRUCT Paint;
+			HDC DeviceContext = BeginPaint(Window, &Paint);
+			win32_win_dimension Dim = Win32GetWindowDimensions(Window);
+			Win32WindowCopyBuffer(GBuffer, DeviceContext, Dim.Width, Dim.Height);
+			EndPaint(Window, &Paint);
+		}
+			break;
+		default:
+			Result = DefWindowProc(Window, Message, WParam, LParam);
+			break;
+	}
+	return Result;
+}
+
+
+
 int CALLBACK WinMain(
 	HINSTANCE Instance, 
 	HINSTANCE PrevInstance, 
@@ -292,6 +314,10 @@ int CALLBACK WinMain(
 		.hInstance = Instance,
 		.lpszClassName = "HandmadeHeroWindowClass"
 	};
+
+  LARGE_INTEGER PerformanceCounterFrequencyRes;
+  QueryPerformanceFrequency(&PerformanceCounterFrequencyRes);
+  i64 PerformanceCounterFrequency = PerformanceCounterFrequencyRes.QuadPart;
 
 	if (!RegisterClassA(&WindowClass))
 	{
@@ -318,13 +344,14 @@ int CALLBACK WinMain(
 	HDC DeviceContext = GetDC(Window);
 
 	int XOffset = 0, YOffset = 0;
-  win32_sound_output SoundOutput = Win32DefaultSoundOutput();
+  GSoundOutput = Win32DefaultSoundOutput();
 
-	Win32InitDsound(Window, (DWORD)SoundOutput.SamplesPerSecond, (DWORD)SoundOutput.SecondaryBufferSize);
-  Win32FillSoundBuffer(&SoundOutput, 0, SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample);
+	Win32InitDsound(Window, (DWORD)GSoundOutput.SamplesPerSecond, (DWORD)GSoundOutput.SecondaryBufferSize);
+  Win32FillSoundBuffer(&GSoundOutput, 0, GSoundOutput.LatencySampleCount * GSoundOutput.BytesPerSample);
   GSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING);
-	while (GRunning)
-	{
+  LARGE_INTEGER LastCounter;
+  QueryPerformanceCounter(&LastCounter);
+  while (GRunning) {
 
 		MSG Message;
 		while (PeekMessageA(&Message, 0, 0, 0, PM_REMOVE))
@@ -333,7 +360,7 @@ int CALLBACK WinMain(
 			// NOTE: These functions can fail but if windows decides not to handle the messeges
 			// there is not much to be done so yeah
 			TranslateMessage(&Message);
-			DispatchMessageA(&Message);	
+			DispatchMessageA(&Message);
 		}
 
 		for (DWORD ControllerIdx = 0; ControllerIdx < XUSER_MAX_COUNT; ++ControllerIdx)
@@ -364,8 +391,8 @@ int CALLBACK WinMain(
 			i16 StickX = Pad->sThumbLX;
 			i16 StickY = Pad->sThumbLY;
        #define CONST_HZ 256
-      SoundOutput.ToneHz = CONST_HZ + StickY/256;
-      SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond/SoundOutput.ToneHz,
+      GSoundOutput.ToneHz = CONST_HZ + StickY/256;
+      GSoundOutput.WavePeriod = GSoundOutput.SamplesPerSecond/GSoundOutput.ToneHz,
 
 			XOffset += StickX / (1 << 12);
 			// NOTE: why do i have to subtract not add tho?
@@ -375,27 +402,21 @@ int CALLBACK WinMain(
 
 		RenderWeirdGradient(&GBuffer, XOffset, YOffset);
 
-    DWORD PlayCursor, WriteCursor;
-    if (SUCCEEDED(GSecondaryBuffer->GetCurrentPosition(&PlayCursor, &WriteCursor)))
-    {
-      DWORD BytesToWrite;
-      DWORD TargetCursor = (PlayCursor + SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample)
-        % SoundOutput.SecondaryBufferSize;
-      DWORD ByteToLock = (SoundOutput.RunningSampleIndex * SoundOutput.BytesPerSample) % SoundOutput.SecondaryBufferSize;
-      if (ByteToLock > TargetCursor)
-      {
-        BytesToWrite = SoundOutput.SecondaryBufferSize - ByteToLock;
-        BytesToWrite += TargetCursor;
-      }
-      else
-      {
-        BytesToWrite = TargetCursor - ByteToLock;
-      }
-      Win32FillSoundBuffer(&SoundOutput, ByteToLock, BytesToWrite);
-    }
+    WriteToSoundBuffer(&GSoundOutput);
 
-		win32_win_dimension Dim = Win32GetWindowDimensions(Window);
-		Win32WindowCopyBuffer(GBuffer, DeviceContext, Dim.Width, Dim.Height);
+    win32_win_dimension Dim = Win32GetWindowDimensions(Window);
+    Win32WindowCopyBuffer(GBuffer, DeviceContext, Dim.Width, Dim.Height);
+
+    LARGE_INTEGER EndCounter;
+    QueryPerformanceCounter(&EndCounter);
+    i64 CounterElapsed = EndCounter.QuadPart - LastCounter.QuadPart;
+    i64 MSPerFrame = (1000*CounterElapsed) / PerformanceCounterFrequency;
+    char Buffer[64] = {};
+    sprintf(Buffer, "frame time %lld [ms]\n", MSPerFrame);
+    OutputDebugStringA(Buffer);
+
+
+    LastCounter = EndCounter;
 
 	}
 	return 0;
